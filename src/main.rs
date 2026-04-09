@@ -3,15 +3,26 @@ use gtk4::{Application, ApplicationWindow, CssProvider, FlowBox, Frame, Image, L
 use gtk4::gdk::Key;
 use gtk4::glib::Propagation;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
 use std::rc::Rc;
+use std::thread;
+
+use hyprland::data::{Clients, Client};
+use hyprland::dispatch::{Dispatch, DispatchType, WindowIdentifier};
+use hyprland::shared::{HyprData, Address};
 
 const APP_ID: &str = "com.antigravity.window_switcher";
 const THUMBNAIL_DIR: &str = "/tmp/switcher-thumbnails";
 const COLUMNS: usize = 4;
-const MOCK_ITEMS: usize = 5;
+
+#[derive(Clone)]
+struct WindowData {
+    address: Address,
+    title: String,
+    class: String,
+}
 
 fn main() {
     let app = Application::builder().application_id(APP_ID).build();
@@ -72,77 +83,125 @@ fn build_ui(app: &Application) {
         .row_spacing(20)
         .build();
 
-    for i in 0..MOCK_ITEMS {
-        let frame = Frame::builder()
-            .css_classes(vec!["window-frame".to_string()])
-            .focusable(true) // Ensure frame can grab physical UI focus
-            .build();
-            
-        let item_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .spacing(10)
-            .build();
-        
-        let icon = Image::builder()
-            .icon_name("image-missing")
-            .pixel_size(128)
-            .build();
-            
-        let label = Label::builder()
-            .label(format!("Mock Window {}", i + 1))
-            .css_classes(vec!["window-title".to_string()])
-            .build();
-            
-        item_box.append(&icon);
-        item_box.append(&label);
-        frame.set_child(Some(&item_box));
-        flow_box.insert(&frame, -1);
-    }
-
     container.append(&flow_box);
     window.set_child(Some(&container));
     
-    // Phase 3: Spatial Navigation (Grid Math Logic)
-    let active_index = Rc::new(Cell::new(0));
+    // Setup state
+    let active_index = Rc::new(RefCell::new(0));
+    let window_list: Rc<RefCell<Vec<WindowData>>> = Rc::new(RefCell::new(Vec::new()));
     
-    // Select the first item initially
-    if let Some(first_child) = flow_box.child_at_index(0) {
-        flow_box.select_child(&first_child);
-    }
+    // Phase 4: Async Dispatch and Channel Message Passing
+    let (sender, receiver) = async_channel::unbounded();
     
-    let controller = EventControllerKey::new();
+    thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            // Fetch Hyprland windows asynchronously using tokio integration
+            if let Ok(clients) = Clients::get_async().await {
+                let mut windows = Vec::new();
+                for client in clients {
+                    // Only display actual windows
+                    if !client.title.is_empty() && client.mapped {
+                        windows.push(WindowData {
+                            address: client.address.clone(),
+                            title: client.title.clone(),
+                            class: client.class.clone(),
+                        });
+                    }
+                }
+                let _ = sender.send(windows);
+            }
+        });
+    });
+
     let flow_box_clone = flow_box.clone();
+    let window_list_rx = window_list.clone();
+    let flow_box_controller_ref = flow_box.clone();
+    
+    gtk4::glib::MainContext::default().spawn_local(async move {
+        while let Ok(windows) = receiver.recv().await {
+            *window_list_rx.borrow_mut() = windows.clone();
+            
+            // Remove old children if any
+            while let Some(child) = flow_box_clone.child_at_index(0) {
+                flow_box_clone.remove(&child);
+            }
+            
+            // Populate Grid
+            for window_data in windows.iter() {
+                let frame = Frame::builder()
+                    .css_classes(vec!["window-frame".to_string()])
+                    .focusable(true)
+                    .build();
+                    
+                let item_box = GtkBox::builder()
+                    .orientation(Orientation::Vertical)
+                    .spacing(10)
+                    .build();
+                
+                let icon = Image::builder()
+                    .icon_name("image-missing") // Intentionally left to missing until grim creates actual thumbnails
+                    .pixel_size(128)
+                    .build();
+                    
+                let label = Label::builder()
+                    .label(window_data.title.chars().take(20).collect::<String>())
+                    .css_classes(vec!["window-title".to_string()])
+                    .build();
+                    
+                item_box.append(&icon);
+                item_box.append(&label);
+                frame.set_child(Some(&item_box));
+                flow_box_clone.insert(&frame, -1);
+            }
+            
+            // Select first automatically
+            if let Some(first_child) = flow_box_clone.child_at_index(0) {
+                first_child.grab_focus();
+                flow_box_clone.select_child(&first_child);
+            }
+        }
+    });
+
+    let controller = EventControllerKey::new();
     let window_clone = window.clone();
     
     controller.connect_key_pressed(move |_, key, _, _| {
-        let mut idx = active_index.get();
-        let total = MOCK_ITEMS;
+        let mut idx = *active_index.borrow();
+        let list_len = window_list.borrow().len();
+        if list_len == 0 {
+            return Propagation::Proceed;
+        }
+        
         let mut handled = true;
         
         match key {
             Key::Right => {
-                if idx + 1 < total { idx += 1; }
+                if idx + 1 < list_len { idx += 1; }
             }
             Key::Left => {
                 if idx > 0 { idx -= 1; }
             }
             Key::Down => {
-                if idx + COLUMNS < total { 
+                if idx + COLUMNS < list_len { 
                     idx += COLUMNS; 
                 } else { 
-                    idx = total - 1; // Snap to the last available item 
+                    idx = list_len - 1; 
                 }
             }
             Key::Up => {
                 if idx >= COLUMNS { 
                     idx -= COLUMNS; 
                 } else { 
-                    idx = 0; // Snap to the first item
+                    idx = 0; 
                 }
             }
             Key::Return => {
-                println!("Window selected at index: {}", idx);
-                // Phase 4 will implement actual dispatch to Hyprland here
+                if let Some(win) = window_list.borrow().get(idx) {
+                    // Dispatch directly to Hyprland
+                    // WindowIdentifier requires the address type
+                    let _ = Dispatch::call(DispatchType::FocusWindow(WindowIdentifier::Address(win.address.clone())));
+                }
                 window_clone.close();
             }
             Key::Escape => {
@@ -152,10 +211,10 @@ fn build_ui(app: &Application) {
         }
         
         if handled {
-            active_index.set(idx);
-            if let Some(child) = flow_box_clone.child_at_index(idx as i32) {
+            *active_index.borrow_mut() = idx;
+            if let Some(child) = flow_box_controller_ref.child_at_index(idx as i32) {
                 child.grab_focus();
-                flow_box_clone.select_child(&child);
+                flow_box_controller_ref.select_child(&child);
             }
             Propagation::Stop
         } else {
@@ -193,7 +252,6 @@ fn load_css() {
             transition: all 0.2s ease-in-out;
         }
 
-        /* Use both hover and GTK actual focus state for visual feedback */
         .window-frame:hover, .window-frame:focus-within {
             border: 2px solid #00ffcc;
             background-color: rgba(60, 60, 80, 0.9);
