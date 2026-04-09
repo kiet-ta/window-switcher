@@ -1,3 +1,12 @@
+use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop, WEnum};
+use wayland_client::protocol::wl_registry::WlRegistry;
+use wayland_client::protocol::wl_shm::{self, WlShm};
+use wayland_client::protocol::wl_shm_pool::WlShmPool;
+use wayland_client::protocol::wl_buffer::WlBuffer;
+use wayland_client::protocol::wl_output::WlOutput;
+use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
+use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1};
+
 use std::os::unix::io::RawFd;
 use libc::{memfd_create, MFD_CLOEXEC};
 use std::ffi::CString;
@@ -15,7 +24,7 @@ pub struct SHMBuffer {
 impl SHMBuffer {
     pub fn new(size: usize) -> Result<Self, String> {
         let name = CString::new("sw-screencopy-shm").unwrap();
-        // Task 2: Buffer Allocation via memfd abstraction
+        // Native Buffer Allocation via memfd abstraction
         let fd = unsafe { memfd_create(name.as_ptr(), MFD_CLOEXEC) };
         if fd < 0 {
             return Err("Failed to execute memfd_create natively.".into());
@@ -39,7 +48,7 @@ impl SHMBuffer {
     }
 }
 
-// Task 2: Absolute Memory Safety (Guaranteeing strict release of underlying OS Handles)
+// Absolute Memory Safety: Guaranteeing strict release of underlying OS Handles
 impl Drop for SHMBuffer {
     fn drop(&mut self) {
         unsafe {
@@ -48,29 +57,138 @@ impl Drop for SHMBuffer {
     }
 }
 
-/// Initializes a low-level async dispatch mapping via `zwlr_screencopy_manager_v1`
-/// Designed to emulate fully independent screencopy frame capture without blocking.
-pub async fn capture_active_workspace(out_path: &str) -> Result<(), String> {
-    // Boilerplate for `wayland-client` v0.31 demands dense global EventQueue loops.
-    // Here we define the SHM capture architecture mathematically simulating compositor output geometry.
-    let width = 1920;
-    let height = 1080;
-    let stride = width * 4;
-    let size = (height * stride) as usize;
+pub enum FrameState {
+    Init,
+    Buffer(wl_shm::Format, u32, u32, u32),
+    Ready,
+    Failed,
+}
 
-    // Securely acquire mapping block
-    let mut shm_buffer = SHMBuffer::new(size)?;
+#[allow(dead_code)]
+pub struct CaptureState {
+    pub registry: Option<WlRegistry>,
+    pub shm: Option<WlShm>,
+    pub output: Option<WlOutput>,
+    pub screencopy_manager: Option<ZwlrScreencopyManagerV1>,
+    pub frame_state: FrameState,
+}
+
+impl Dispatch<WlRegistry, ()> for CaptureState {
+    fn event(
+        state: &mut Self,
+        registry: &WlRegistry,
+        event: wayland_client::protocol::wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_registry::Event::Global { name, interface, version: _ } = event {
+            match interface.as_str() {
+                "wl_shm" => {
+                    let shm = registry.bind::<WlShm, _, _>(name, 1, qh, ());
+                    state.shm = Some(shm);
+                }
+                "wl_output" => {
+                    if state.output.is_none() {
+                        let output = registry.bind::<WlOutput, _, _>(name, 1, qh, ());
+                        state.output = Some(output);
+                    }
+                }
+                "zwlr_screencopy_manager_v1" => {
+                    let manager = registry.bind::<ZwlrScreencopyManagerV1, _, _>(name, 1, qh, ());
+                    state.screencopy_manager = Some(manager);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
+    fn event(
+        state: &mut Self,
+        _: &ZwlrScreencopyFrameV1,
+        event: zwlr_screencopy_frame_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_screencopy_frame_v1::Event::Buffer { format, width, height, stride } => {
+                if let WEnum::Value(fmt) = format {
+                    state.frame_state = FrameState::Buffer(fmt, width, height, stride);
+                }
+            }
+            zwlr_screencopy_frame_v1::Event::Ready { tv_sec_hi: _, tv_sec_lo: _, tv_nsec: _ } => {
+                state.frame_state = FrameState::Ready;
+            }
+            zwlr_screencopy_frame_v1::Event::Failed => {
+                state.frame_state = FrameState::Failed;
+            }
+            _ => {}
+        }
+    }
+}
+
+delegate_noop!(CaptureState: ignore WlShm);
+delegate_noop!(CaptureState: ignore WlShmPool);
+delegate_noop!(CaptureState: ignore WlBuffer);
+delegate_noop!(CaptureState: ignore WlOutput);
+delegate_noop!(CaptureState: ignore ZwlrScreencopyManagerV1);
+
+/// Dispatches a true screencopy frame request for the active output.
+/// Orchestrates the entire `wayland-client` v0.31 protocol cycle natively.
+pub async fn capture_active_workspace(out_path: &str) -> Result<(), String> {
+    let conn = Connection::connect_to_env().map_err(|e| format!("Wayland connect error: {}", e))?;
+    let display = conn.display();
+    let mut event_queue = conn.new_event_queue();
+    let qh = event_queue.handle();
+    let _registry = display.get_registry(&qh, ());
+
+    let mut state = CaptureState {
+        registry: None,
+        shm: None,
+        output: None,
+        screencopy_manager: None,
+        frame_state: FrameState::Init,
+    };
+
+    // Roundtrip to establish registry globals binding
+    event_queue.roundtrip(&mut state).map_err(|e| format!("Roundtrip error: {}", e))?;
+
+    let manager = state.screencopy_manager.clone().ok_or("wlr-screencopy not supported by compositor")?;
+    let output = state.output.clone().ok_or("No output found")?;
+    let wl_shm = state.shm.clone().ok_or("wl_shm not supported")?;
+
+    let frame = manager.capture_output(0, &output, &qh, ());
+
+    // Await the wlr composite framework to declare frame Buffer sizes
+    event_queue.roundtrip(&mut state).map_err(|e| format!("Roundtrip error: {}", e))?;
+
+    let (format, width, height, stride) = match state.frame_state {
+        FrameState::Buffer(f, w, h, s) => (f, w, h, s),
+        _ => return Err("Failed to get buffer event from compositor".into()),
+    };
+
+    let size = (height * stride) as usize;
+    let shm_buffer = SHMBuffer::new(size)?;
     
-    // Stub payload modeling frame injection (simulating a blue desktop footprint format).
-    // In actual implementation, `zwlr_screencopy_frame_v1` emits `Event::Ready`.
-    for chunk in shm_buffer.mmap.chunks_mut(4) {
-        chunk[0] = 255; // B
-        chunk[1] = 120; // G
-        chunk[2] = 50;  // R
-        chunk[3] = 255; // A
+    let fd = unsafe { std::os::unix::io::BorrowedFd::borrow_raw(shm_buffer.fd) };
+    let pool = wl_shm.create_pool(fd, size as i32, &qh, ());
+    let wl_buffer = pool.create_buffer(0, width as i32, height as i32, stride as i32, format, &qh, ());
+
+    frame.copy(&wl_buffer);
+
+    // Synchronously listen until the graphics block writes to our Mmap explicitly
+    loop {
+        event_queue.blocking_dispatch(&mut state).map_err(|e| format!("Dispatch error: {}", e))?;
+        match state.frame_state {
+            FrameState::Ready => break,
+            FrameState::Failed => return Err("Compositor failed to copy frame".into()),
+            _ => continue,
+        }
     }
 
-    // Process safely synchronously down stream 
     crate::backend::image_processor::process_and_save(
         &shm_buffer.mmap,
         width,
