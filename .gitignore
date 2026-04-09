@@ -1,1 +1,7 @@
 /target
+/packaging/src/
+/packaging/pkg/
+/packaging/window-switcher/
+/packaging/*.pkg.tar.*
+/packaging/*.src.tar.*
+/packaging/*.log

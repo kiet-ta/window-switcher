@@ -4,31 +4,32 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="A Hyprland visual window switcher with spatial navigation and native wayland snapshotting."
 arch=('x86_64')
-url="https://github.com/your-username/window-switcher"
+url="https://github.com/kiet-ta/window-switcher"
 license=('MIT')
 depends=('gtk4' 'gtk4-layer-shell' 'wayland')
 makedepends=('cargo' 'pkgconf' 'git')
 provides=('window-switcher')
 conflicts=('window-switcher')
-source=("git+https://github.com/your-username/window-switcher.git")
+_srcname="window-switcher"
+source=("git+https://github.com/kiet-ta/window-switcher.git")
 sha256sums=('SKIP')
 
 pkgver() {
-  cd "$pkgname"
-  git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g'
+    cd "$srcdir/$_srcname"
+    git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g'
 }
 
 build() {
-  cd "$pkgname"
-  export RUSTUP_TOOLCHAIN=stable
-  cargo build --release --locked
+    cd "$srcdir/$_srcname"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo build --release --locked
 }
 
 package() {
-  cd "$pkgname"
-  install -Dm755 "target/release/window-switcher" "$pkgdir/usr/bin/window-switcher"
-  
-  if [ -f "LICENSE" ]; then
-    install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-  fi
+    cd "$srcdir/$_srcname"
+    install -Dm755 "target/release/window-switcher" "$pkgdir/usr/bin/window-switcher"
+
+    if [ -f "LICENSE" ]; then
+        install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    fi
 }
