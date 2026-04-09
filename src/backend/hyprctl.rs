@@ -1,5 +1,5 @@
-use hyprland::data::{Clients, Client};
-use hyprland::shared::{Address, HyprData, HyprDataActiveOptional};
+use hyprland::data::{Clients, Client, Monitor};
+use hyprland::shared::{Address, HyprData, HyprDataActiveOptional, HyprDataActive};
 use hyprland::event_listener::EventListener;
 use std::thread;
 use std::collections::HashSet;
@@ -10,6 +10,12 @@ pub struct WindowData {
     pub address: Address,
     pub title: String,
     pub class: String,
+}
+
+#[derive(Clone)]
+pub struct ActiveState {
+    pub address: Address,
+    pub monitor: String,
 }
 
 /// Spawns the main Hyprland IPC bridge orchestrating both the application window list
@@ -30,16 +36,16 @@ pub fn spawn_listener(sender: async_channel::Sender<Vec<WindowData>>) {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let mut last_address: Option<Address> = None;
+            let mut last_state: Option<ActiveState> = None;
             
-            let _ = refresh_and_send(&sender, &mut last_address).await;
+            let _ = refresh_and_send(&sender, &mut last_state).await;
             
             while let Ok(_) = signal_rx.recv().await {
-                if let Some(prev) = last_address.clone() {
-                    let out_path = format!("{}/{}.png", crate::config::THUMBNAIL_DIR, prev);
-                    let _ = crate::backend::screencopy::capture_active_workspace(&out_path).await;
+                if let Some(prev) = last_state.clone() {
+                    let out_path = format!("{}/{}.png", crate::config::THUMBNAIL_DIR, prev.address);
+                    let _ = crate::backend::screencopy::capture_active_workspace(&out_path, &prev.monitor).await;
                 }
-                let _ = refresh_and_send(&sender, &mut last_address).await;
+                let _ = refresh_and_send(&sender, &mut last_state).await;
             }
         });
     });
@@ -49,7 +55,7 @@ pub fn spawn_listener(sender: async_channel::Sender<Vec<WindowData>>) {
 /// and subsequently spawns fire-and-forget Garbage Collection.
 async fn refresh_and_send(
     sender: &async_channel::Sender<Vec<WindowData>>, 
-    last_address: &mut Option<Address>
+    last_state: &mut Option<ActiveState>
 ) -> Result<(), ()> {
     if let Ok(clients) = Clients::get_async().await {
         let mut windows = Vec::new();
@@ -74,7 +80,12 @@ async fn refresh_and_send(
     }
     
     if let Ok(Some(active)) = Client::get_active_async().await {
-        *last_address = Some(active.address);
+        if let Ok(monitor) = Monitor::get_active_async().await {
+            *last_state = Some(ActiveState {
+                address: active.address,
+                monitor: monitor.name,
+            });
+        }
     }
     
     Ok(())

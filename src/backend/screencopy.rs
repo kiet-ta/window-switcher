@@ -68,7 +68,8 @@ pub enum FrameState {
 pub struct CaptureState {
     pub registry: Option<WlRegistry>,
     pub shm: Option<WlShm>,
-    pub output: Option<WlOutput>,
+    pub outputs: Vec<WlOutput>,
+    pub output_names: Vec<(WlOutput, String)>,
     pub screencopy_manager: Option<ZwlrScreencopyManagerV1>,
     pub frame_state: FrameState,
 }
@@ -82,17 +83,16 @@ impl Dispatch<WlRegistry, ()> for CaptureState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wayland_client::protocol::wl_registry::Event::Global { name, interface, version: _ } = event {
+        if let wayland_client::protocol::wl_registry::Event::Global { name, interface, version } = event {
             match interface.as_str() {
                 "wl_shm" => {
                     let shm = registry.bind::<WlShm, _, _>(name, 1, qh, ());
                     state.shm = Some(shm);
                 }
                 "wl_output" => {
-                    if state.output.is_none() {
-                        let output = registry.bind::<WlOutput, _, _>(name, 1, qh, ());
-                        state.output = Some(output);
-                    }
+                    let v = std::cmp::min(version, 4);
+                    let output = registry.bind::<WlOutput, _, _>(name, v, qh, ());
+                    state.outputs.push(output);
                 }
                 "zwlr_screencopy_manager_v1" => {
                     let manager = registry.bind::<ZwlrScreencopyManagerV1, _, _>(name, 1, qh, ());
@@ -130,15 +130,29 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
     }
 }
 
+impl Dispatch<WlOutput, ()> for CaptureState {
+    fn event(
+        state: &mut Self,
+        output: &WlOutput,
+        event: wayland_client::protocol::wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_output::Event::Name { name } = event {
+            state.output_names.push((output.clone(), name));
+        }
+    }
+}
+
 delegate_noop!(CaptureState: ignore WlShm);
 delegate_noop!(CaptureState: ignore WlShmPool);
 delegate_noop!(CaptureState: ignore WlBuffer);
-delegate_noop!(CaptureState: ignore WlOutput);
 delegate_noop!(CaptureState: ignore ZwlrScreencopyManagerV1);
 
 /// Dispatches a true screencopy frame request for the active output.
 /// Orchestrates the entire `wayland-client` v0.31 protocol cycle natively.
-pub async fn capture_active_workspace(out_path: &str) -> Result<(), String> {
+pub async fn capture_active_workspace(out_path: &str, target_monitor_name: &str) -> Result<(), String> {
     let conn = Connection::connect_to_env().map_err(|e| format!("Wayland connect error: {}", e))?;
     let display = conn.display();
     let mut event_queue = conn.new_event_queue();
@@ -148,7 +162,8 @@ pub async fn capture_active_workspace(out_path: &str) -> Result<(), String> {
     let mut state = CaptureState {
         registry: None,
         shm: None,
-        output: None,
+        outputs: Vec::new(),
+        output_names: Vec::new(),
         screencopy_manager: None,
         frame_state: FrameState::Init,
     };
@@ -157,8 +172,21 @@ pub async fn capture_active_workspace(out_path: &str) -> Result<(), String> {
     event_queue.roundtrip(&mut state).map_err(|e| format!("Roundtrip error: {}", e))?;
 
     let manager = state.screencopy_manager.clone().ok_or("wlr-screencopy not supported by compositor")?;
-    let output = state.output.clone().ok_or("No output found")?;
     let wl_shm = state.shm.clone().ok_or("wl_shm not supported")?;
+
+    // Second Roundtrip: Await bound wl_output objects to broadcast their details natively.
+    event_queue.roundtrip(&mut state).map_err(|e| format!("Roundtrip error: {}", e))?;
+
+    let mut target_output = None;
+    for (out, name) in &state.output_names {
+        if name == target_monitor_name {
+            target_output = Some(out.clone());
+            break;
+        }
+    }
+    
+    // Multi-Monitor Strategy: Failover to primary indexed output if the target identity dynamically detached.
+    let output = target_output.or_else(|| state.outputs.first().cloned()).ok_or("No output found mapping to target.")?;
 
     let frame = manager.capture_output(0, &output, &qh, ());
 
