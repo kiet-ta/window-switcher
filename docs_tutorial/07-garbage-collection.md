@@ -1,6 +1,6 @@
 # Thumbnail Garbage Collection (GC)
 
-After building the Native Snapshot Daemon in Phase 2, we inevitably introduced a caching problem. The switcher caches thumbnails to `/tmp/switcher-thumbnails` rapidly, but as windows close, these image files pile up infinitely silently consuming valuable `tmpfs` RAM. 
+After building the Native Snapshot Daemon, we inevitably introduced a caching problem. The switcher caches thumbnails to `/tmp/switcher-thumbnails` rapidly, but as windows close, these image files pile up infinitely silently consuming valuable `tmpfs` RAM. 
 
 ## Design Pattern: Fire-and-Forget GC
 

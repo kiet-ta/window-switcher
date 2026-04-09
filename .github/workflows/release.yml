@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Update system and install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm rustup gcc pkgconf gtk4 gtk4-layer-shell wayland git
+          rustup default stable
+      
+      - name: Build project
+        run: cargo build --release
+
+      - name: Strip binary
+        run: strip target/release/window-switcher
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/window-switcher
+          generate_release_notes: true

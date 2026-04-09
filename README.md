@@ -19,8 +19,24 @@ It features **Snapshot Caching** via an in-memory `tmpfs` disk and **Asynchronou
 - **Sub-Millisecond Read Times:** Reads window thumbnails explicitly from a RAM disk.
 - **Spatial Navigation:** 2D native keyboard movement mathematically bound to a grid structure.
 
-## 🚀 Getting Started
-Ready to compile and jump in? Head over to the [Getting Started Guide](./docs_tutorial/getting-started.md) to bootstrap your Arch Linux environment natively.
+## 🚀 Installation & Deployment
+
+### Pre-compiled Binary (Arch Linux)
+The fastest way to install is by downloading the native binary directly from our [Releases Page](https://github.com/your-username/window-switcher/releases). 
+1. Download the latest `window-switcher` binary.
+2. Mark it executable: `chmod +x window-switcher`
+3. Move it to your path: `sudo mv window-switcher /usr/local/bin/`
+
+### Compiling from Source (AUR / PKGBUILD)
+For Arch Linux users, we provide a native `PKGBUILD` ensuring exact tracking natively via `pacman`.
+```bash
+git clone https://github.com/your-username/window-switcher.git
+cd window-switcher/packaging
+makepkg -si
+```
+
+## 📚 Getting Started
+Ready to compile manually or modify the internal Rust logic? Head over to the [Getting Started Guide](./docs_tutorial/getting-started.md) to bootstrap your development environment.
 
 Our internal logic and structural guidelines are thoroughly documented in the `docs_tutorial/` folder.
 
