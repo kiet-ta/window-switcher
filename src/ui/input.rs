@@ -5,8 +5,17 @@ use gtk4::{ApplicationWindow, EventControllerKey, FlowBox};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::backend::hyprctl::{self, WindowData};
+use crate::backend::hyprctl::WindowData;
 use crate::config::COLUMNS;
+
+fn focus_window_by_index(window_list: &Rc<RefCell<Vec<WindowData>>>, idx: usize) {
+    if let Some(win) = window_list.borrow().get(idx) {
+        let address_str = format!("address:{}", win.address);
+        let _ = std::process::Command::new("hyprctl")
+            .args(&["dispatch", "focuswindow", &address_str])
+            .spawn();
+    }
+}
 
 pub fn bind_keys(
     window: &ApplicationWindow,
@@ -16,16 +25,18 @@ pub fn bind_keys(
 ) {
     let controller = EventControllerKey::new();
     controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
-    let window_clone = window.clone();
-    let flow_box_controller_ref = flow_box.clone();
+    let window_pressed = window.clone();
+    let flow_box_pressed = flow_box.clone();
+    let window_list_pressed = window_list.clone();
+    let active_index_pressed = active_index.clone();
 
     controller.connect_key_pressed(move |_, key, _, _| {
-        let mut idx = *active_index.borrow();
-        let list_len = window_list.borrow().len();
+        let mut idx = *active_index_pressed.borrow();
+        let list_len = window_list_pressed.borrow().len();
         if list_len == 0 {
             return match key {
                 Key::Escape | Key::Return => {
-                    window_clone.close();
+                    window_pressed.close();
                     Propagation::Stop
                 }
                 _ => Propagation::Proceed,
@@ -35,10 +46,8 @@ pub fn bind_keys(
         let mut handled = true;
 
         match key {
-            Key::Right => {
-                if idx + 1 < list_len {
-                    idx += 1;
-                }
+            Key::Right | Key::Tab => {
+                idx = (idx + 1) % list_len;
             }
             Key::Left => {
                 if idx > 0 {
@@ -58,13 +67,11 @@ pub fn bind_keys(
                 }
             }
             Key::Return => {
-                if let Some(win) = window_list.borrow().get(idx) {
-                    hyprctl::queue_focus_window(win.address.to_string());
-                }
-                window_clone.close();
+                focus_window_by_index(&window_list_pressed, idx);
+                window_pressed.close();
             }
             Key::Escape => {
-                window_clone.close();
+                window_pressed.close();
             }
             _ => {
                 handled = false;
@@ -72,14 +79,25 @@ pub fn bind_keys(
         }
 
         if handled {
-            *active_index.borrow_mut() = idx;
-            if let Some(child) = flow_box_controller_ref.child_at_index(idx as i32) {
+            *active_index_pressed.borrow_mut() = idx;
+            if let Some(child) = flow_box_pressed.child_at_index(idx as i32) {
                 child.grab_focus();
-                flow_box_controller_ref.select_child(&child);
+                flow_box_pressed.select_child(&child);
             }
             Propagation::Stop
         } else {
             Propagation::Proceed
+        }
+    });
+
+    let window_released = window.clone();
+    let window_list_released = window_list.clone();
+    let active_index_released = active_index.clone();
+    controller.connect_key_released(move |_, key, _, _| {
+        if matches!(key, Key::Alt_L | Key::Alt_R) {
+            let idx = *active_index_released.borrow();
+            focus_window_by_index(&window_list_released, idx);
+            window_released.close();
         }
     });
 
