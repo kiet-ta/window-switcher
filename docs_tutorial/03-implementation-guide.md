@@ -1,34 +1,73 @@
-# Implementation Guide
+# Implementation Guide (Decoupled Backend)
 
-In this walkthrough, we will break down the implementation step-by-step. Building our window switcher involves four distinct developmental phases, transitioning from basic scaffolds to asynchronous, real-time Wayland communication.
+This guide explains the current architecture after the panic-safety refactor.
 
-## Phase 1: Foundation Construction
-Our first step was setting up the project through Cargo. We included:
-- `gtk4` and `gtk4-layer-shell` for drawing our isolated graphical overlay.
-- `hyprland` to communicate with the compositor.
-- `tokio` to handle asynchronous operations.
+## 1. Module Responsibilities
 
-## Phase 2: Drawing the Skeleton 
-In the second phase, we constructed the GTK4 user interface. The beauty of `gtk4-layer-shell` is that we can instruct the display server to treat our interface differently than regular application windows. By assigning `Layer::Overlay` and setting the keyboard mode to `Exclusive`, our menu guarantees it captures your inputs immediately without Wayland intercepting them.
+| File | Responsibility |
+| --- | --- |
+| `src/ui/mod.rs` | Builds overlay window, grid UI, async receiver loop |
+| `src/ui/input.rs` | Keyboard navigation and action dispatch trigger |
+| `src/backend/hyprctl.rs` | Event listener, safe JSON fetching, focus worker queue |
+| `src/backend/screencopy.rs` | Wayland screencopy capture path |
 
-We generated a `FlowBox` to arrange window thumbnails dynamically and implemented a sleek, CSS-driven "Glassmorphism" aesthetic.
+## 2. Safe Data Fetching Pipeline
 
-## Phase 3: Spatial Navigation (Grid Math)
-Because we are utilizing a grid of thumbnails, the user needs to traverse them physically. A user expects `Arrow Right` to move to the next window, and `Arrow Down` to jump to a window positioned directly underneath. 
+The backend uses native `hyprctl` commands:
 
-To accomplish this:
-1. We intercept the GTK keyboard events via an `EventControllerKey`.
-2. Given a maximum column limit (e.g., 4 items per row), pressing "Down" translates to `current_index + 4`. 
-3. Mathematically, we restrict this value so you cannot exceed the number of actively displayed windows. The UI then commands the widget at the newly calculated index to grab focus.
+1. `hyprctl clients -j`
+2. `hyprctl activewindow -j`
+3. `hyprctl monitors -j`
 
-## Phase 4: Why Tokio and Channels? (Asynchronous Design)
-In our final phase, we integrate the Hyprland IPC wrapper. This is where many desktop widgets fail. 
+Each command is parsed with `serde_json::from_slice` into private typed structs:
 
-If we tell the GTK main thread (the thread drawing our interface) to talk to the Hyprland IPC directly, the interface will freeze while waiting for the IPC's response. This is called a **Blocking Operation**.
+- `HyprctlClient`
+- `HyprctlActiveWindow`
+- `HyprctlMonitor`
 
-To prevent stuttering or freezes:
-1. We launch an isolated async runtime using **Tokio**.
-2. The Tokio task queries the Hyprland sockets independently.
-3. We utilize **Multi-Producer, Single-Consumer (MPSC) Channels** (specifically GTK's `glib::MainContext::channel`). 
+All failures are handled with `Option`/`Result` checks and `.ok()?`-style exits.  
+No `unwrap()` and no `expect()` in this data path.
 
-The Tokio worker effectively passes messages (like "Here is the list of open windows!") into a channel. The GTK thread listens on the other end, receiving the data smoothly in its own time. This isolates the heavy data-fetching logic entirely from the graphics generation!
+## 3. Why This Is Panic-Safe
+
+The previous design depended on third-party wrappers that could panic internally.  
+The new design:
+
+- Executes subprocesses directly.
+- Treats command errors as normal runtime conditions.
+- Skips only the failed refresh cycle.
+- Keeps the process and UI alive.
+
+## 4. Focus Dispatch Isolated from UI Thread
+
+When user presses Enter:
+
+1. UI enqueues the target address to a bounded `sync_channel`.
+2. A dedicated worker thread executes:
+   `hyprctl dispatch focuswindow address:<address>`
+3. UI closes immediately without waiting.
+
+This guarantees keyboard responsiveness even if compositor IPC is slow.
+
+## 5. Observability
+
+Focus dispatch failures are logged to:
+
+- `stderr`
+- `/tmp/window-switcher-focus.log`
+
+The log includes exit code, stdout, and stderr for debugging compositor-side errors.
+
+## 6. Keyboard Input Stability
+
+`EventControllerKey` runs in `PropagationPhase::Capture` and the window is explicitly focused.  
+This prevents child widgets from swallowing Enter/Escape unexpectedly.
+
+## 7. Garbage Collection Integration
+
+`refresh_and_send` builds an `active_addresses` set from mapped clients and triggers async GC:
+
+- keep `<address>.png` if address is still active
+- delete stale files otherwise
+
+GC is best-effort and never blocks rendering.

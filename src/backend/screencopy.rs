@@ -1,16 +1,18 @@
-use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop, WEnum};
+use wayland_client::protocol::wl_buffer::WlBuffer;
+use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::protocol::wl_registry::WlRegistry;
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
-use wayland_client::protocol::wl_buffer::WlBuffer;
-use wayland_client::protocol::wl_output::WlOutput;
+use wayland_client::{Connection, Dispatch, QueueHandle, WEnum, delegate_noop};
+use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{
+    self, ZwlrScreencopyFrameV1,
+};
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
-use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1};
 
-use std::os::unix::io::RawFd;
-use libc::{memfd_create, MFD_CLOEXEC};
-use std::ffi::CString;
+use libc::{MFD_CLOEXEC, memfd_create};
 use memmap2::MmapMut;
+use std::ffi::CString;
+use std::os::unix::io::RawFd;
 
 /// Abstracts the safe POSIX file-descriptor lifecycle logic for interacting with
 /// `wl_shm` Shared Memory pools exposed by Wayland Protocol.
@@ -83,7 +85,12 @@ impl Dispatch<WlRegistry, ()> for CaptureState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wayland_client::protocol::wl_registry::Event::Global { name, interface, version } = event {
+        if let wayland_client::protocol::wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_shm" => {
                     let shm = registry.bind::<WlShm, _, _>(name, 1, qh, ());
@@ -114,12 +121,21 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_screencopy_frame_v1::Event::Buffer { format, width, height, stride } => {
+            zwlr_screencopy_frame_v1::Event::Buffer {
+                format,
+                width,
+                height,
+                stride,
+            } => {
                 if let WEnum::Value(fmt) = format {
                     state.frame_state = FrameState::Buffer(fmt, width, height, stride);
                 }
             }
-            zwlr_screencopy_frame_v1::Event::Ready { tv_sec_hi: _, tv_sec_lo: _, tv_nsec: _ } => {
+            zwlr_screencopy_frame_v1::Event::Ready {
+                tv_sec_hi: _,
+                tv_sec_lo: _,
+                tv_nsec: _,
+            } => {
                 state.frame_state = FrameState::Ready;
             }
             zwlr_screencopy_frame_v1::Event::Failed => {
@@ -152,7 +168,10 @@ delegate_noop!(CaptureState: ignore ZwlrScreencopyManagerV1);
 
 /// Dispatches a true screencopy frame request for the active output.
 /// Orchestrates the entire `wayland-client` v0.31 protocol cycle natively.
-pub async fn capture_active_workspace(out_path: &str, target_monitor_name: &str) -> Result<(), String> {
+pub async fn capture_active_workspace(
+    out_path: &str,
+    target_monitor_name: &str,
+) -> Result<(), String> {
     let conn = Connection::connect_to_env().map_err(|e| format!("Wayland connect error: {}", e))?;
     let display = conn.display();
     let mut event_queue = conn.new_event_queue();
@@ -169,13 +188,20 @@ pub async fn capture_active_workspace(out_path: &str, target_monitor_name: &str)
     };
 
     // Roundtrip to establish registry globals binding
-    event_queue.roundtrip(&mut state).map_err(|e| format!("Roundtrip error: {}", e))?;
+    event_queue
+        .roundtrip(&mut state)
+        .map_err(|e| format!("Roundtrip error: {}", e))?;
 
-    let manager = state.screencopy_manager.clone().ok_or("wlr-screencopy not supported by compositor")?;
+    let manager = state
+        .screencopy_manager
+        .clone()
+        .ok_or("wlr-screencopy not supported by compositor")?;
     let wl_shm = state.shm.clone().ok_or("wl_shm not supported")?;
 
     // Second Roundtrip: Await bound wl_output objects to broadcast their details natively.
-    event_queue.roundtrip(&mut state).map_err(|e| format!("Roundtrip error: {}", e))?;
+    event_queue
+        .roundtrip(&mut state)
+        .map_err(|e| format!("Roundtrip error: {}", e))?;
 
     let mut target_output = None;
     for (out, name) in &state.output_names {
@@ -184,14 +210,18 @@ pub async fn capture_active_workspace(out_path: &str, target_monitor_name: &str)
             break;
         }
     }
-    
+
     // Multi-Monitor Strategy: Failover to primary indexed output if the target identity dynamically detached.
-    let output = target_output.or_else(|| state.outputs.first().cloned()).ok_or("No output found mapping to target.")?;
+    let output = target_output
+        .or_else(|| state.outputs.first().cloned())
+        .ok_or("No output found mapping to target.")?;
 
     let frame = manager.capture_output(0, &output, &qh, ());
 
     // Await the wlr composite framework to declare frame Buffer sizes
-    event_queue.roundtrip(&mut state).map_err(|e| format!("Roundtrip error: {}", e))?;
+    event_queue
+        .roundtrip(&mut state)
+        .map_err(|e| format!("Roundtrip error: {}", e))?;
 
     let (format, width, height, stride) = match state.frame_state {
         FrameState::Buffer(f, w, h, s) => (f, w, h, s),
@@ -200,16 +230,26 @@ pub async fn capture_active_workspace(out_path: &str, target_monitor_name: &str)
 
     let size = (height * stride) as usize;
     let shm_buffer = SHMBuffer::new(size)?;
-    
+
     let fd = unsafe { std::os::unix::io::BorrowedFd::borrow_raw(shm_buffer.fd) };
     let pool = wl_shm.create_pool(fd, size as i32, &qh, ());
-    let wl_buffer = pool.create_buffer(0, width as i32, height as i32, stride as i32, format, &qh, ());
+    let wl_buffer = pool.create_buffer(
+        0,
+        width as i32,
+        height as i32,
+        stride as i32,
+        format,
+        &qh,
+        (),
+    );
 
     frame.copy(&wl_buffer);
 
     // Synchronously listen until the graphics block writes to our Mmap explicitly
     loop {
-        event_queue.blocking_dispatch(&mut state).map_err(|e| format!("Dispatch error: {}", e))?;
+        event_queue
+            .blocking_dispatch(&mut state)
+            .map_err(|e| format!("Dispatch error: {}", e))?;
         match state.frame_state {
             FrameState::Ready => break,
             FrameState::Failed => return Err("Compositor failed to copy frame".into()),
@@ -222,7 +262,7 @@ pub async fn capture_active_workspace(out_path: &str, target_monitor_name: &str)
         width,
         height,
         stride,
-        out_path
+        out_path,
     );
 
     Ok(())

@@ -1,21 +1,33 @@
-# Native Snapshot Daemon: `wlr-screencopy`
+# Native Snapshot Daemon (`wlr-screencopy`)
 
-We advanced deeply into the Wayland display mechanics, leaving simple command-line scripts (`grim`) behind in favor of a **Native Protocol Daemon**. Building an IPC daemon in Rust guarantees absolute memory safety, no hidden bottlenecks, and deterministic thumbnail pipeline routing.
+This subsystem captures thumbnails of the previously active window/workspace in the background.
 
-## The Architectural Approach 
+## Current Trigger Model
 
-Wayland restricts applications from freely taking full-screen screenshots natively for security purposes (preventing generic keyloggers). To bypass this gracefully:
+1. `EventListener` emits an active-window-change signal.
+2. Backend reads the previous `last_state` (`address`, `monitor`).
+3. Backend calls `capture_active_workspace(out_path, monitor_name).await`.
 
-1. **Protocol Handshake:** We interface directly with `zwlr_screencopy_manager_v1`, a low-level extension specifically created by wlroots compositors (like Hyprland & Sway) granting authorized buffers to raw frame output.
-2. **Buffer Allocation (`memfd_create`):** Wayland compositors physically map the GPU pixels directly into the client's memory address space. We constructed an abstract `SHMBuffer` using Linux's POSIX memory API natively to ensure our application receives raw ARGB bytes directly from the compositor seamlessly. Wait times effectively disappear.
-3. **Rust Memory Guarantees:** Through standard RAII operations (`impl Drop`), our POSIX OS Handles (File Descriptors) implicitly destroy themselves securely when the memory block drops out of scope, eliminating memory leaks explicitly.
+This keeps screenshot work out of the GTK rendering path.
 
-## Why Hook IPC Events?
+## Why It Matters
 
-Traditional switchers scan windows *after* the UI launches. This slows down the rendering. 
+- UI can open instantly because thumbnails are often pre-captured.
+- Heavy screencopy and image processing stay off the keyboard/UI thread.
+- Failures in capture do not terminate the app (`let _ = ...` best effort).
 
-Instead, our daemon hooks into Hyprland's active-window shift signal (`activewindowv2`). The instant you focus out of Window A into Window B, the snapshot daemon captures Window A immediately in the background utilizing a purely isolated Tokio runtime pipe, caching it into our ultra-fast `tmpfs`.
+## Relation to Decoupled Fetching
 
-By the time you press the actual overlay shortcut key, our window thumbnails are already loaded and waiting. The `image` crate securely handles RGBA pipeline conversions applying our optimal hardware-agnostic Triangle resampling cleanly.
+The screenshot daemon no longer depends on `hyprland::data` structs.  
+`last_state` is built from:
 
-> **Instructional Design Highlight:** Designing asynchronous decoupled background workers represents the pinnacle of performant Linux desktop engineering. Always assume I/O operates at peak constraints!
+- `hyprctl activewindow -j` (address + monitor id)
+- `hyprctl monitors -j` (monitor id -> monitor name)
+
+This aligns screenshot routing with the same panic-safe data model used for the window list.
+
+## Operational Notes
+
+- Output path format: `/tmp/switcher-thumbnails/<address>.png`
+- Capture is asynchronous and fire-and-forget.
+- Missing monitor mapping simply skips that capture cycle (safe degradation).

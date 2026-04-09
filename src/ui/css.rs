@@ -38,7 +38,7 @@ pub fn load_css() {
             font-weight: 500;
         }
     "#;
-    
+
     provider.load_from_data(css_data);
     gtk4::style_context_add_provider_for_display(
         &gtk4::gdk::Display::default().expect("Could not connect to a display."),

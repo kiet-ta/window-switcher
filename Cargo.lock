@@ -1490,6 +1490,8 @@ dependencies = [
  "image",
  "libc",
  "memmap2",
+ "serde",
+ "serde_json",
  "tokio",
  "wayland-client",
  "wayland-protocols-wlr",

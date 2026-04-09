@@ -1,22 +1,33 @@
 # Thumbnail Garbage Collection (GC)
 
-After building the Native Snapshot Daemon, we inevitably introduced a caching problem. The switcher caches thumbnails to `/tmp/switcher-thumbnails` rapidly, but as windows close, these image files pile up infinitely silently consuming valuable `tmpfs` RAM. 
+The app stores thumbnails in `/tmp/switcher-thumbnails`. Without cleanup, stale files can accumulate.
 
-## Design Pattern: Fire-and-Forget GC
+## Source of Truth
 
-To keep the application mathematically bounded and strictly SOLID, we decoupled the Garbage Collector from the core render pipeline.
+`refresh_and_send` builds a `HashSet<String>` of active mapped client addresses from:
 
-### Implementation Concept
-1. **Source of Truth:** The `refresh_and_send` function continuously maps currently active, mapped windows. We extract exactly this active list into an optimal `HashSet<String>` containing the raw native `hex` representation strings of active addresses.
-2. **Asynchronous Spawning:** Executing `tokio::spawn(async move { ... })` creates a secondary background thread natively pushing the heavy Linux POSIX filesystem calls perfectly out of the event listener boundaries.
-3. **Difference Mapping:** The GC parses `/tmp/switcher-thumbnails`. For every target file structured as `<address>.png`, we parse the prefix. If the prefix string fundamentally does **not** exist in the known-good active `HashSet`, the underlying memory file is destroyed instantly using `tokio::fs::remove_file`.
-
-```rust
-// A structural subset highlighting O(1) mathematical lookup mappings
-let prefix = name_str.trim_end_matches(".png");
-if !active_addresses.contains(prefix) {
-    let _ = tokio::fs::remove_file(entry.path()).await;
-}
+```bash
+hyprctl clients -j
 ```
 
-> **Instructional Highlight (KISS & Error Handling):** Standard Unix systems often lock operations. Deliberately suppressing edge exceptions on file deletions (`let _ = tokio...`) acknowledges that if a file is externally locked or suddenly vanished during traversal, the GC strictly ignores it and repeats on the next pulse. It avoids crashing the pipeline over non-fatal latency events!
+This set is the authoritative list for valid thumbnails in the current cycle.
+
+## Cleanup Strategy
+
+GC runs as a detached async task:
+
+1. Read all files in thumbnail directory.
+2. Keep files matching `<active_address>.png`.
+3. Remove files for addresses not in `active_addresses`.
+
+## Why This Is Safe
+
+- GC is non-blocking (`tokio::spawn`).
+- File operation errors are ignored intentionally (best effort).
+- Rendering and input remain responsive even during directory scans.
+
+## Practical Effect
+
+- Lower tmpfs memory usage over time.
+- No stale previews after windows close.
+- No user-visible freezes from maintenance work.

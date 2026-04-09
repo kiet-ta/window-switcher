@@ -1,40 +1,50 @@
-# Getting Started 🚀
+# Getting Started
 
-Welcome to the Hyprland Visual Window Switcher. This guide will take you from a raw codebase to a beautifully running desktop overlay in less than 2 minutes.
+This guide gets the current decoupled version running quickly.
 
-## 1. Prerequisites 
-Ensure your Arch Linux system has the foundational development packages for GTK4 and Rust:
+## 1. Install Prerequisites
 
 ```bash
 sudo pacman -S rustup gtk4 gtk4-layer-shell pkgconf
 rustup default stable
 ```
 
-*For more extensive details on why these are required, review [`02-environment-setup.md`](./02-environment-setup.md).*
+Also ensure Hyprland CLI works:
 
-## 2. Bootstrapping the Fast-Cache
-Our engine achieves ultra-fast performance by leveraging your RAM rather than your SSD for image storage. Prepare the `tmpfs` directory currently hardcoded into our engine:
+```bash
+hyprctl version
+```
+
+## 2. Prepare Runtime Cache
 
 ```bash
 mkdir -p /tmp/switcher-thumbnails
 rm -f /tmp/switcher-thumbnails/*
 ```
 
-## 3. Build & Run
-From the root of the repository, ask Cargo to pull our asynchronous workspace (`tokio`, `hyprland-rs`) and compile the executable:
+## 3. Build and Run
 
 ```bash
-# This will download the dependencies and instantly launch the UI overlay
 cargo run --release
 ```
 
-## 4. Usage
-- Instantly observe all active window clients populated dynamically in standard GTK FlowBoxes.
-- Utilize the **Arrow Keys** to surf through the 2D spatial grid.
-- Press **Enter/Return** to immediately banish the UI and warp your desktop to the target window.
-- Press **Escape** to cancel and return seamlessly.
+## 4. Controls
 
-## What's Next?
-If you want to understand how the asynchronous thread safely passes data to GTK, jump straight into [`03-implementation-guide.md`](./03-implementation-guide.md). 
+- Arrow keys: move selection
+- Enter: focus selected window and close overlay
+- Escape: close overlay
 
-Happy hacking!
+## 5. Debugging
+
+If focus dispatch fails, inspect:
+
+```bash
+tail -n 100 /tmp/window-switcher-focus.log
+```
+
+## 6. Learning Path
+
+1. `01-architecture-concept.md`
+2. `03-implementation-guide.md`
+3. `06-native-snapshot-daemon.md`
+4. `07-garbage-collection.md`

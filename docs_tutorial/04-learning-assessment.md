@@ -1,21 +1,33 @@
 # Learning Assessment
 
-Welcome to the Instructional Design Document (IDD) checkpoint. After completing the four code phases, please reflect on these scenarios to assess your system engineering mindset.
+Use these questions to validate your understanding of the current architecture.
 
-## Reflective Questions 🧠
+## 1. Why is `hyprctl -j` + `serde_json` safer than wrapper macros?
 
-**1. What happens if the `tmpfs` gets full?**
-> **Scenario:** You open 500 windows at once, and the screenshot daemon fills `/tmp/switcher-thumbnails` entirely. Because `/tmp` lives in RAM, will your computer crash?
-> **Answer Insight:** Modern Linux kernels limit `tmpfs` to roughly 50% of your total RAM by default. Your computer won't crash immediately, but the switcher will fail to write new thumbnails, throwing an error. Good code should monitor disk space and delete old thumbnails!
+**Expected reasoning:**  
+Because command failures and parse failures are represented as `Result`/`Option`, we can skip a refresh cycle without panicking the process.
 
-**2. Why did we use `gtk4-layer-shell` instead of standard `gtk4` windows?**
-> **Scenario:** Wayland is heavily restricted for security purposes. If you build a standard GTK interface, Hyprland will wrap it in a window border and subject it to tiling rules.
-> **Answer Insight:** Layer Shell protocols literally bypass the tiling compositor logic, allowing panels, switchers, and widgets to draw directly on top of the screen as "Overlays", completely ignoring desktop rules.
+## 2. Why keep `EventListener` but remove `hyprland::data` usage?
 
-**3. Why did we implement Tokio channels instead of blocking the main thread?**
-> **Scenario:** Imagine if a script fetching Hyprland window clients stalls for 2 seconds. What happens to the UI?
-> **Answer Insight:** If the GTK thread fetches the data directly, the entire application freezes (stutters) for 2 seconds. The user's keystrokes are ignored. Offloading this to Tokio guarantees that the UI stays fluid at 60+ FPS while waiting for the data to arrive asynchronously.
+**Expected reasoning:**  
+`EventListener` is useful as a lightweight signal trigger. Data fetching is the risky part, so it was moved to explicit OS commands for full control of error handling.
 
-**4. How does the 2D Grid Math protect against "Out of Bounds" errors?**
-> **Scenario:** You are on the last column mapping out a down-press logic: `index + 4`. The total array is only 5 items.
-> **Answer Insight:** Our math explicitly compares the calculated offset against the maximum array size. If `index + 4` exceeds the available limit, we forcefully anchor (snap) the selection to the final available item `total - 1`.
+## 3. Why does focus dispatch run on a worker queue?
+
+**Expected reasoning:**  
+To prevent GTK input stalls. Enter should close the overlay immediately even if compositor IPC is delayed.
+
+## 4. What does "silent failover" mean in `refresh_and_send`?
+
+**Expected reasoning:**  
+If any command or JSON parse fails, the function ignores that segment and continues running future cycles. The app stays alive.
+
+## 5. Why still keep logs for focus dispatch?
+
+**Expected reasoning:**  
+Silent failover is for non-critical read paths. Focus action is user-triggered and operationally important, so we keep observability in `/tmp/window-switcher-focus.log`.
+
+## 6. What failure can still happen without crashing?
+
+**Expected reasoning:**  
+Malformed compositor JSON, missing `hyprctl`, monitor lookup mismatch, or temporary I/O errors. All should degrade behavior, not terminate the process.
