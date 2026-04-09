@@ -22,7 +22,7 @@ pub fn build_ui(app: &Application) {
 
     window.init_layer_shell();
     window.set_layer(Layer::Overlay);
-    window.set_keyboard_mode(KeyboardMode::Exclusive);
+    window.set_keyboard_mode(KeyboardMode::None);
 
     window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Bottom, true);
@@ -133,6 +133,4 @@ pub fn build_ui(app: &Application) {
     });
 
     input::bind_keys(&window, &flow_box, window_list, active_index);
-    window.present();
-    let _ = window.grab_focus();
 }

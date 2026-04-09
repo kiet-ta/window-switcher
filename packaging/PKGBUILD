@@ -1,6 +1,6 @@
 # Maintainer: Kiet Ta <trananhkiet21082005@gmail.com>
 pkgname=window-switcher-git
-pkgver=v1.0.0.r2.g49eb8ca
+pkgver=v1.0.0.r4.g82c3138
 pkgrel=1
 pkgdesc="A Hyprland visual window switcher with spatial navigation and native wayland snapshotting."
 arch=('x86_64')

@@ -2,6 +2,7 @@ use gtk4::gdk::Key;
 use gtk4::glib::Propagation;
 use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, EventControllerKey, FlowBox};
+use gtk4_layer_shell::{KeyboardMode, LayerShell};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -15,6 +16,11 @@ fn focus_window_by_index(window_list: &Rc<RefCell<Vec<WindowData>>>, idx: usize)
             .args(&["dispatch", "focuswindow", &address_str])
             .spawn();
     }
+}
+
+fn hide_overlay(window: &ApplicationWindow) {
+    window.set_keyboard_mode(KeyboardMode::None);
+    window.set_visible(false);
 }
 
 pub fn bind_keys(
@@ -36,7 +42,7 @@ pub fn bind_keys(
         if list_len == 0 {
             return match key {
                 Key::Escape | Key::Return => {
-                    window_pressed.close();
+                    hide_overlay(&window_pressed);
                     Propagation::Stop
                 }
                 _ => Propagation::Proceed,
@@ -68,10 +74,10 @@ pub fn bind_keys(
             }
             Key::Return => {
                 focus_window_by_index(&window_list_pressed, idx);
-                window_pressed.close();
+                hide_overlay(&window_pressed);
             }
             Key::Escape => {
-                window_pressed.close();
+                hide_overlay(&window_pressed);
             }
             _ => {
                 handled = false;
@@ -97,7 +103,7 @@ pub fn bind_keys(
         if matches!(key, Key::Alt_L | Key::Alt_R) {
             let idx = *active_index_released.borrow();
             focus_window_by_index(&window_list_released, idx);
-            window_released.close();
+            hide_overlay(&window_released);
         }
     });
 

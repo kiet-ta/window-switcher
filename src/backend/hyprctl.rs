@@ -1,12 +1,9 @@
 use hyprland::event_listener::EventListener;
 use serde::Deserialize;
 use std::collections::HashSet;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::process::Command;
-use std::sync::{OnceLock, mpsc};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -49,96 +46,6 @@ struct HyprctlMonitor {
     name: String,
 }
 
-type FocusWindowTx = mpsc::SyncSender<String>;
-const FOCUS_WORKER_LOG_FILE: &str = "/tmp/window-switcher-focus.log";
-
-pub fn queue_focus_window(address: String) {
-    match focus_dispatch_sender().try_send(address) {
-        Ok(_) => {}
-        Err(mpsc::TrySendError::Full(address)) => {
-            log_focus_event(&format!(
-                "focuswindow queue is full; dropped dispatch request for address:{}",
-                address
-            ));
-        }
-        Err(mpsc::TrySendError::Disconnected(address)) => {
-            log_focus_event(&format!(
-                "focuswindow worker disconnected; cannot dispatch request for address:{}",
-                address
-            ));
-        }
-    }
-}
-
-fn focus_dispatch_sender() -> &'static FocusWindowTx {
-    static FOCUS_DISPATCH_TX: OnceLock<FocusWindowTx> = OnceLock::new();
-    FOCUS_DISPATCH_TX.get_or_init(|| {
-        let (tx, rx) = mpsc::sync_channel::<String>(64);
-        thread::spawn(move || {
-            while let Ok(address) = rx.recv() {
-                dispatch_focus_window(address);
-            }
-        });
-        tx
-    })
-}
-
-fn dispatch_focus_window(address: String) {
-    let address_str = format!("address:{}", address);
-    match Command::new("hyprctl")
-        .args(["dispatch", "focuswindow", &address_str])
-        .output()
-    {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            log_focus_event(&format!(
-                "hyprctl focuswindow failed for {} (status: {:?})\nstdout: {}\nstderr: {}",
-                address_str,
-                output.status.code(),
-                stdout.trim(),
-                stderr.trim()
-            ));
-        }
-        Err(err) => {
-            log_focus_event(&format!(
-                "failed to spawn hyprctl focuswindow for {}: {}",
-                address_str, err
-            ));
-        }
-    }
-}
-
-fn log_focus_event(message: &str) {
-    eprintln!("{}", message);
-
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(FOCUS_WORKER_LOG_FILE)
-    {
-        Ok(mut file) => {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_secs())
-                .unwrap_or_default();
-            if let Err(err) = writeln!(file, "[{}] {}", timestamp, message) {
-                eprintln!(
-                    "failed to write focusworker log to {}: {}",
-                    FOCUS_WORKER_LOG_FILE, err
-                );
-            }
-        }
-        Err(err) => {
-            eprintln!(
-                "failed to open focusworker log file {}: {}",
-                FOCUS_WORKER_LOG_FILE, err
-            );
-        }
-    }
-}
-
 /// Spawns the main Hyprland IPC bridge orchestrating both the application window list
 /// and the real-time background active-workspace snapshot mechanism.
 pub fn spawn_listener(sender: async_channel::Sender<Vec<WindowData>>) {
@@ -169,18 +76,28 @@ pub fn spawn_listener(sender: async_channel::Sender<Vec<WindowData>>) {
                     .await;
                 }
 
-                while let Ok(_) = signal_rx.recv().await {
-                    if let Some(prev) = last_state.clone() {
-                        let out_path =
-                            format!("{}/{}.png", crate::config::THUMBNAIL_DIR, prev.address);
-                        let _ = crate::backend::screencopy::capture_active_workspace(
-                            &out_path,
-                            &prev.monitor,
-                        )
-                        .await;
-                    }
+                loop {
+                    tokio::select! {
+                        recv_result = signal_rx.recv() => {
+                            if recv_result.is_err() {
+                                break;
+                            }
 
-                    let _ = refresh_and_send(&sender, &mut last_state).await;
+                            if let Some(prev) = last_state.clone() {
+                                let out_path = format!("{}/{}.png", crate::config::THUMBNAIL_DIR, prev.address);
+                                let _ = crate::backend::screencopy::capture_active_workspace(
+                                    &out_path,
+                                    &prev.monitor,
+                                )
+                                .await;
+                            }
+
+                            let _ = refresh_and_send(&sender, &mut last_state).await;
+                        }
+                        _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                            let _ = refresh_and_send(&sender, &mut last_state).await;
+                        }
+                    }
                 }
             });
         }
