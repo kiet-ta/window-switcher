@@ -4,12 +4,14 @@ pub fn load_css() {
     let provider = CssProvider::new();
     let css_data = r#"
         window {
-            background-color: rgba(15, 15, 20, 0.85); 
-            border-radius: 15px;
+            background-color: rgba(20, 20, 25, 0.7);
         }
         
         .main-container {
-            padding: 30px;
+            background: rgba(30, 30, 40, 0.95);
+            border-radius: 24px; /* Bo góc tinh tế */
+            padding: 24px;
+            box-shadow: 0px 10px 30px rgba(0, 0, 0, 0.5);
         }
 
         .title-label {
@@ -18,19 +20,22 @@ pub fn load_css() {
             color: white;
         }
 
-        .window-frame {
-            background-color: rgba(40, 40, 50, 0.9);
-            border-radius: 10px;
-            padding: 15px;
-            border: 2px solid transparent;
-            transition: all 0.2s ease-in-out;
-        }
+    .window-frame {
+        background-color: #2A2A35;
+        border-radius: 16px;
+        padding: 10px;
+        /* Hiệu ứng viền gradient khi hover/focus */
+        border: 2px solid transparent;
+        background-clip: padding-box;
+        transition: all 0.15s cubic-bezier(0.25, 1, 0.5, 1);
+    }
 
-        .window-frame:hover, .window-frame:focus-within {
-            border: 2px solid #00ffcc;
-            background-color: rgba(60, 60, 80, 0.9);
-            box-shadow: 0 0 10px rgba(0, 255, 204, 0.5);
-        }
+    .window-frame:focus-within {
+        background-image: linear-gradient(#2A2A35, #2A2A35), linear-gradient(135deg, #00ffcc, #7000ff);
+        background-origin: border-box;
+        background-clip: content-box, border-box;
+        transform: scale(1.05); /* UX Playbook: Phản hồi thị giác rõ ràng */
+    }
 
         .window-title {
             color: white;

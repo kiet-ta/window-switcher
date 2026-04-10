@@ -60,7 +60,7 @@ pub fn build_ui(app: &Application) {
     container.append(&flow_box);
     window.set_child(Some(&container));
 
-    let active_index = Rc::new(RefCell::new(0));
+    let active_index = Rc::new(RefCell::new(1));
     let window_list: Rc<RefCell<Vec<WindowData>>> = Rc::new(RefCell::new(Vec::new()));
 
     let (sender, receiver) = async_channel::unbounded();

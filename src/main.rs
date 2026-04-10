@@ -37,7 +37,12 @@ fn spawn_sigusr1_listener(sender: async_channel::Sender<()>) {
 }
 
 fn main() {
-    let daemon_mode = std::env::args().any(|arg| arg == "--daemon");
+    let args: Vec<String> = std::env::args().collect();
+    let daemon_mode = args.iter().any(|arg| arg == "--daemon");
+    let gtk_args: Vec<&str> = args
+        .iter()
+        .filter_map(|arg| (arg != "--daemon").then_some(arg.as_str()))
+        .collect();
     let (signal_tx, signal_rx) = async_channel::unbounded::<()>();
     spawn_sigusr1_listener(signal_tx);
 
@@ -81,5 +86,5 @@ fn main() {
         });
     });
 
-    app.run();
+    app.run_with_args(&gtk_args);
 }
