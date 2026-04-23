@@ -3,11 +3,13 @@ use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::protocol::wl_registry::WlRegistry;
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
-use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum, delegate_noop};
+use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, QueueHandle, WEnum};
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{
     self, ZwlrScreencopyFrameV1,
 };
-use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
+use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{
+    ZwlrScreencopyManagerV1,
+};
 
 use libc::{MFD_CLOEXEC, memfd_create};
 use memmap2::MmapMut;
@@ -79,8 +81,8 @@ pub struct ScreencopySession {
 
 impl ScreencopySession {
     pub fn connect() -> Result<Self, String> {
-        let connection =
-            Connection::connect_to_env().map_err(|error| format!("Wayland connect error: {error}"))?;
+        let connection = Connection::connect_to_env()
+            .map_err(|error| format!("Wayland connect error: {error}"))?;
         let display = connection.display();
         let mut event_queue = connection.new_event_queue();
         let queue_handle = event_queue.handle();

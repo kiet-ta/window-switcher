@@ -11,8 +11,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::config::{
-    FOCUS_LOG_PATH, FOCUS_QUEUE_CAPACITY, MONITOR_REFRESH_SECS, REFRESH_DEBOUNCE_MS,
-    SAFETY_POLL_SECS, THUMBNAIL_DIR, THUMBNAIL_QUEUE_CAPACITY,
+    FOCUS_LOG_PATH,
+    FOCUS_QUEUE_CAPACITY,
+    MONITOR_REFRESH_SECS,
+    REFRESH_DEBOUNCE_MS,
+    SAFETY_POLL_SECS,
+    THUMBNAIL_DIR,
+    THUMBNAIL_QUEUE_CAPACITY,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -305,7 +310,8 @@ pub fn spawn_backend(sender: async_channel::Sender<UiSnapshot>) -> FocusControll
 
     let (thumbnail_tx, thumbnail_rx) =
         async_channel::bounded::<ThumbnailJob>(THUMBNAIL_QUEUE_CAPACITY);
-    let (thumbnail_result_tx, thumbnail_result_rx) = async_channel::unbounded::<ThumbnailResult>();
+    let (thumbnail_result_tx, thumbnail_result_rx) =
+        async_channel::unbounded::<ThumbnailResult>();
     spawn_thumbnail_worker(thumbnail_rx, thumbnail_result_tx);
 
     let backend_sender = sender.clone();
@@ -337,7 +343,9 @@ pub fn spawn_backend(sender: async_channel::Sender<UiSnapshot>) -> FocusControll
                             .await
                             {}
 
-                            let _ = refresh_and_emit(&backend_sender, &thumbnail_tx, &mut state).await;
+                            let _ =
+                                refresh_and_emit(&backend_sender, &thumbnail_tx, &mut state)
+                                    .await;
                         }
                         recv_result = thumbnail_result_rx.recv() => {
                             let Ok(result) = recv_result else {
@@ -351,11 +359,19 @@ pub fn spawn_backend(sender: async_channel::Sender<UiSnapshot>) -> FocusControll
                                 } else {
                                     state.last_status.clone()
                                 };
-                                let _ = emit_snapshot(&backend_sender, &mut state, cached_items, status).await;
+                                let _ = emit_snapshot(
+                                    &backend_sender,
+                                    &mut state,
+                                    cached_items,
+                                    status,
+                                )
+                                .await;
                             }
                         }
                         _ = safety_poll.tick() => {
-                            let _ = refresh_and_emit(&backend_sender, &thumbnail_tx, &mut state).await;
+                            let _ =
+                                refresh_and_emit(&backend_sender, &thumbnail_tx, &mut state)
+                                    .await;
                         }
                     }
                 }
@@ -486,19 +502,21 @@ async fn refresh_and_emit(
 
     let mut capture_job = None;
     if let Some(active_window) = active_window.as_ref() {
-        let monitor_name = if let Some(monitor_name) = state.monitor_map.get(&active_window.monitor) {
-            Some(monitor_name.clone())
-        } else {
-            if refresh_monitors(state) {
-                state.monitor_map.get(&active_window.monitor).cloned()
+        let monitor_name =
+            if let Some(monitor_name) = state.monitor_map.get(&active_window.monitor) {
+                Some(monitor_name.clone())
             } else {
-                degraded = true;
-                None
-            }
-        };
+                if refresh_monitors(state) {
+                    state.monitor_map.get(&active_window.monitor).cloned()
+                } else {
+                    degraded = true;
+                    None
+                }
+            };
 
         if let Some(monitor_name) = monitor_name {
-            capture_job = state.handle_active_transition(active_window.address.clone(), monitor_name);
+            capture_job =
+                state.handle_active_transition(active_window.address.clone(), monitor_name);
         }
     }
 

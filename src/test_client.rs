@@ -1,11 +1,15 @@
-use wayland_client::{Connection, Dispatch, QueueHandle, delegate_dispatch, delegate_noop, WEnum};
+use wayland_client::{delegate_dispatch, delegate_noop, Connection, Dispatch, QueueHandle, WEnum};
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
-use wayland_client::protocol::wl_shm::{self, WlShm};
-use wayland_client::protocol::wl_shm_pool::{self, WlShmPool};
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_output::{self, WlOutput};
-use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{self, ZwlrScreencopyManagerV1};
-use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1};
+use wayland_client::protocol::wl_shm::{self, WlShm};
+use wayland_client::protocol::wl_shm_pool::{self, WlShmPool};
+use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{
+    self, ZwlrScreencopyFrameV1,
+};
+use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{
+    self, ZwlrScreencopyManagerV1,
+};
 
 #[derive(Debug)]
 pub enum FrameState {
@@ -32,7 +36,12 @@ impl Dispatch<WlRegistry, ()> for CaptureState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version: _ } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version: _,
+        } = event
+        {
             match interface.as_str() {
                 "wl_shm" => {
                     let shm = registry.bind::<WlShm, _, _>(name, 1, qh, ());
@@ -45,7 +54,8 @@ impl Dispatch<WlRegistry, ()> for CaptureState {
                     }
                 }
                 "zwlr_screencopy_manager_v1" => {
-                    let manager = registry.bind::<ZwlrScreencopyManagerV1, _, _>(name, 1, qh, ());
+                    let manager =
+                        registry.bind::<ZwlrScreencopyManagerV1, _, _>(name, 1, qh, ());
                     state.screencopy_manager = Some(manager);
                 }
                 _ => {}
@@ -64,7 +74,12 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_screencopy_frame_v1::Event::Buffer { format, width, height, stride } => {
+            zwlr_screencopy_frame_v1::Event::Buffer {
+                format,
+                width,
+                height,
+                stride,
+            } => {
                 if let WEnum::Value(fmt) = format {
                     state.frame_state = FrameState::Buffer(fmt, width, height, stride);
                 }
