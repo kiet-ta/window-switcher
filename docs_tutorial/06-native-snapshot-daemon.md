@@ -1,33 +1,17 @@
-# Native Snapshot Daemon (`wlr-screencopy`)
+# Native Snapshot Worker
 
-This subsystem captures thumbnails of the previously active window/workspace in the background.
+Thumbnail capture is now handled by a dedicated worker thread.
 
-## Current Trigger Model
+## Trigger Model
 
-1. `EventListener` emits an active-window-change signal.
-2. Backend reads the previous `last_state` (`address`, `monitor`).
-3. Backend calls `capture_active_workspace(out_path, monitor_name).await`.
+1. The backend notices that the active window changed.
+2. The previous active window address and monitor name are converted into a `ThumbnailJob`.
+3. The worker reuses its existing Wayland screencopy session when possible.
+4. The result is sent back to the backend as success or failure.
+5. The backend updates `ThumbnailState` and emits a new `UiSnapshot` only if the UI output changed.
 
-This keeps screenshot work out of the GTK rendering path.
+## Current Scope
 
-## Why It Matters
-
-- UI can open instantly because thumbnails are often pre-captured.
-- Heavy screencopy and image processing stay off the keyboard/UI thread.
-- Failures in capture do not terminate the app (`let _ = ...` best effort).
-
-## Relation to Decoupled Fetching
-
-The screenshot daemon no longer depends on `hyprland::data` structs.  
-`last_state` is built from:
-
-- `hyprctl activewindow -j` (address + monitor id)
-- `hyprctl monitors -j` (monitor id -> monitor name)
-
-This aligns screenshot routing with the same panic-safe data model used for the window list.
-
-## Operational Notes
-
-- Output path format: `/tmp/switcher-thumbnails/<address>.png`
-- Capture is asynchronous and fire-and-forget.
-- Missing monitor mapping simply skips that capture cycle (safe degradation).
+- Preview files are still keyed by window address.
+- The captured image still represents the active monitor/workspace view rather than a true per-window crop.
+- Image writes are skipped when the PNG bytes have not changed.

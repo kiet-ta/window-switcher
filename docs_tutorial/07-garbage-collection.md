@@ -1,33 +1,16 @@
-# Thumbnail Garbage Collection (GC)
+# Thumbnail Garbage Collection
 
-The app stores thumbnails in `/tmp/switcher-thumbnails`. Without cleanup, stale files can accumulate.
+The thumbnail directory is still `/tmp/switcher-thumbnails`.
 
-## Source of Truth
+## Source Of Truth
 
-`refresh_and_send` builds a `HashSet<String>` of active mapped client addresses from:
+- Active mapped client addresses from `hyprctl clients -j`.
 
-```bash
-hyprctl clients -j
-```
+## Current Behavior
 
-This set is the authoritative list for valid thumbnails in the current cycle.
+- GC only runs when the active-address set changes.
+- Only one GC task may be in flight at a time.
+- Files not matching the current `<address>.png` set are deleted.
+- Errors are ignored so that rendering and input stay responsive.
 
-## Cleanup Strategy
-
-GC runs as a detached async task:
-
-1. Read all files in thumbnail directory.
-2. Keep files matching `<active_address>.png`.
-3. Remove files for addresses not in `active_addresses`.
-
-## Why This Is Safe
-
-- GC is non-blocking (`tokio::spawn`).
-- File operation errors are ignored intentionally (best effort).
-- Rendering and input remain responsive even during directory scans.
-
-## Practical Effect
-
-- Lower tmpfs memory usage over time.
-- No stale previews after windows close.
-- No user-visible freezes from maintenance work.
+This keeps tmpfs usage predictable without re-scanning the directory every refresh cycle.

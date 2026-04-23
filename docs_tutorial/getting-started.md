@@ -1,7 +1,5 @@
 # Getting Started
 
-This guide gets the current decoupled version running quickly.
-
 ## 1. Install Prerequisites
 
 ```bash
@@ -9,40 +7,42 @@ sudo pacman -S rustup gtk4 gtk4-layer-shell pkgconf
 rustup default stable
 ```
 
-Also ensure Hyprland CLI works:
+Verify Hyprland CLI access:
 
 ```bash
 hyprctl version
 ```
 
-## 2. Prepare Runtime Cache
+## 2. Prepare Runtime Directories
 
 ```bash
 mkdir -p /tmp/switcher-thumbnails
-rm -f /tmp/switcher-thumbnails/*
 ```
 
-## 3. Build and Run
+## 3. Run Locally
 
 ```bash
 cargo run --release
 ```
 
-## 4. Controls
-
-- Arrow keys: move selection
-- Enter: focus selected window and close overlay
-- Escape: close overlay
-
-## 5. Debugging
-
-If focus dispatch fails, inspect:
+For daemon mode:
 
 ```bash
-tail -n 100 /tmp/window-switcher-focus.log
+cargo run --release -- --daemon
 ```
 
-## 6. Learning Path
+Then toggle the running daemon with `SIGUSR1`.
+
+## 4. Validate Locally
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo build --release --locked
+```
+
+## 5. Recommended Reading
 
 1. `01-architecture-concept.md`
 2. `03-implementation-guide.md`

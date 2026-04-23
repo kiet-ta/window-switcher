@@ -5,8 +5,10 @@ mod ui;
 use gtk4::Application;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{KeyboardMode, LayerShell};
+use std::cell::Cell;
 use std::fs;
 use std::path::Path;
+use std::rc::Rc;
 use std::thread;
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -45,6 +47,7 @@ fn main() {
         .collect();
     let (signal_tx, signal_rx) = async_channel::unbounded::<()>();
     spawn_sigusr1_listener(signal_tx);
+    let signal_listener_attached = Rc::new(Cell::new(false));
 
     let app = Application::builder()
         .application_id(config::APP_ID)
@@ -53,15 +56,16 @@ fn main() {
     app.connect_startup(|_| {
         ui::css::load_css();
         if !Path::new(config::THUMBNAIL_DIR).exists() {
-            fs::create_dir_all(config::THUMBNAIL_DIR).unwrap_or_else(|_| {
+            if let Err(_) = fs::create_dir_all(config::THUMBNAIL_DIR) {
                 eprintln!(
                     "Failed to create local tmpfs cache at {}",
                     config::THUMBNAIL_DIR
                 );
-            });
+            }
         }
     });
 
+    let signal_listener_attached_activate = signal_listener_attached.clone();
     app.connect_activate(move |app| {
         if app.active_window().is_none() {
             ui::build_ui(app);
@@ -76,14 +80,17 @@ fn main() {
 
         set_overlay_visibility(&window, !daemon_mode);
 
-        let signal_window = window.clone();
-        let signal_rx = signal_rx.clone();
-        gtk4::glib::MainContext::default().spawn_local(async move {
-            while signal_rx.recv().await.is_ok() {
-                let visible = signal_window.is_visible();
-                set_overlay_visibility(&signal_window, !visible);
-            }
-        });
+        if !signal_listener_attached_activate.get() {
+            signal_listener_attached_activate.set(true);
+            let signal_window = window.clone();
+            let signal_rx = signal_rx.clone();
+            gtk4::glib::MainContext::default().spawn_local(async move {
+                while signal_rx.recv().await.is_ok() {
+                    let visible = signal_window.is_visible();
+                    set_overlay_visibility(&signal_window, !visible);
+                }
+            });
+        }
     });
 
     app.run_with_args(&gtk_args);

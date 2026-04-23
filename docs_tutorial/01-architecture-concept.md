@@ -1,65 +1,41 @@
-# Architecture Concept: Decoupled, Panic-Safe Window Switcher
+# Architecture Concept
 
-This project uses a **decoupled architecture** to keep the GTK main thread responsive and prevent crashes from third-party IPC wrappers.
+The current implementation is built around a snapshot pipeline:
 
-## Why We Refactored
+1. Hyprland emits active-window change events.
+2. The backend debounces those bursts for `75ms`.
+3. The backend fetches the latest client list and active window state.
+4. A `UiSnapshot` is emitted only if the rendered result changed.
+5. GTK updates existing cards in place.
 
-The old path relied on `hyprland-rs` data macros. In some failure cases, those internals could panic due to `.expect()` usage.  
-The current architecture avoids that risk by:
+## Why This Matters
 
-1. Fetching state through native `hyprctl ... -j` commands.
-2. Parsing JSON with `serde`/`serde_json`.
-3. Treating command/parse errors as **non-fatal** (graceful failover).
+- The UI thread does not spawn compositor commands directly.
+- The overlay no longer rebuilds the full grid on every refresh.
+- Keyboard selection is tracked by address, which removes stale-index bugs.
+- Focus dispatch and thumbnail capture run in dedicated workers.
 
-## Core Components
+## Main Components
 
-| Component | Responsibility | Safety Rule |
-| --- | --- | --- |
-| `src/ui/*` | Draw overlay, handle key navigation, close instantly on Enter/Escape | Never block on compositor I/O |
-| `EventListener` thread | Receive active-window change signals | Signal-only, no heavy work |
-| `refresh_and_send` | Pull clients/active window/monitors via `hyprctl` | No `unwrap()` / no `expect()` |
-| Focus worker queue | Run `hyprctl dispatch focuswindow` off the UI thread | Queue + background worker + logging |
-| Snapshot daemon | Capture previous active workspace thumbnail | Fire-and-forget async call |
-| Thumbnail GC | Remove stale `<address>.png` files | Best-effort, non-blocking cleanup |
+| Component | Responsibility |
+| --- | --- |
+| `src/backend/hyprctl.rs` | Debounced Hyprland refresh loop, MRU ordering, focus worker, GC gating |
+| `src/backend/screencopy.rs` | Reusable Wayland screencopy session |
+| `src/backend/image_processor.rs` | BGRA -> RGBA conversion, aspect-ratio resize, deduplicated PNG writes |
+| `src/ui/mod.rs` | Snapshot rendering, card cache, loading/empty/degraded states |
+| `src/ui/input.rs` | Address-based keyboard navigation and focus dispatch |
 
-## Data Flow (Read Path)
+## Output Contract
 
-1. Listener receives `activewindow` signal.
-2. Backend runs `hyprctl clients -j`.
-3. Backend parses JSON into typed structs and builds `Vec<WindowData>`.
-4. Backend sends window list to GTK via async channel.
-5. GTK renders thumbnails from `/tmp/switcher-thumbnails`.
+The backend emits:
 
-If any `hyprctl` command fails or JSON is malformed, that cycle is skipped safely without crashing the app.
-
-## Data Flow (Write Path: Focus)
-
-1. User presses Enter.
-2. UI enqueues the selected address into a bounded queue.
-3. Worker thread executes `hyprctl dispatch focuswindow address:<addr>`.
-4. UI closes immediately (no wait).
-
-Errors are logged to `stderr` and `/tmp/window-switcher-focus.log`.
-
-## Sequence Diagram
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant UI as GTK Main Thread
-    participant Listener as EventListener Thread
-    participant Backend as Hyprctl Backend
-    participant Worker as Focus Worker
-    participant Hypr as hyprctl
-
-    Listener->>Backend: active window changed signal
-    Backend->>Hypr: clients -j / activewindow -j / monitors -j
-    Hypr-->>Backend: JSON output (or failure)
-    Backend-->>UI: Vec<WindowData> (best effort)
-    User->>UI: Enter on selected window
-    UI->>Worker: queue_focus_window(address)
-    Worker->>Hypr: dispatch focuswindow address:<addr>
-    UI-->>User: overlay closes immediately
+```rust
+UiSnapshot {
+    items: Vec<WindowData>,
+    selected_address: Option<String>,
+    status: UiStatus,
+    revision: u64,
+}
 ```
 
-This design gives you low latency, panic safety, and clear observability boundaries.
+This makes rendering deterministic and easy to diff.

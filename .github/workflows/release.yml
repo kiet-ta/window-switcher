@@ -20,7 +20,7 @@ jobs:
           rustup default stable
       
       - name: Build project
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Strip binary
         run: strip target/release/window-switcher

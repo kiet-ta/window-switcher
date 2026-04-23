@@ -4,50 +4,101 @@ pub fn load_css() {
     let provider = CssProvider::new();
     let css_data = r#"
         window {
-            background-color: rgba(20, 20, 25, 0.7);
+            background-color: rgba(10, 14, 22, 0.58);
         }
-        
+
+        .overlay-root {
+            padding: 8px;
+        }
+
         .main-container {
-            background: rgba(30, 30, 40, 0.95);
-            border-radius: 24px; /* Bo góc tinh tế */
-            padding: 24px;
-            box-shadow: 0px 10px 30px rgba(0, 0, 0, 0.5);
+            background: linear-gradient(180deg, rgba(18, 24, 34, 0.96), rgba(11, 15, 22, 0.92));
+            border-radius: 24px;
+            padding: 24px 28px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
         }
 
         .title-label {
+            color: #f7fbff;
             font-size: 24pt;
-            font-weight: bold;
-            color: white;
+            font-weight: 700;
         }
 
-    .window-frame {
-        background-color: #2A2A35;
-        border-radius: 16px;
-        padding: 10px;
-        /* Hiệu ứng viền gradient khi hover/focus */
-        border: 2px solid transparent;
-        background-clip: padding-box;
-        transition: all 0.15s cubic-bezier(0.25, 1, 0.5, 1);
-    }
+        .status-label {
+            color: rgba(226, 236, 247, 0.82);
+            font-size: 11pt;
+            font-weight: 500;
+        }
 
-    .window-frame:focus-within {
-        background-image: linear-gradient(#2A2A35, #2A2A35), linear-gradient(135deg, #00ffcc, #7000ff);
-        background-origin: border-box;
-        background-clip: content-box, border-box;
-        transform: scale(1.05); /* UX Playbook: Phản hồi thị giác rõ ràng */
-    }
+        .grid-scroll {
+            background: transparent;
+        }
+
+        .window-grid {
+            padding: 4px;
+        }
+
+        .window-frame {
+            background: rgba(17, 22, 31, 0.92);
+            border-radius: 20px;
+            padding: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            transition: all 120ms ease-out;
+        }
+
+        .window-frame.selected-window {
+            border-color: rgba(79, 195, 247, 0.92);
+            box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18);
+        }
+
+        .window-frame.active-window {
+            background: rgba(24, 33, 47, 0.96);
+            border-color: rgba(255, 196, 107, 0.68);
+        }
+
+        .window-frame.thumbnail-pending {
+            border-style: dashed;
+        }
+
+        .window-frame.thumbnail-failed {
+            border-color: rgba(255, 110, 110, 0.68);
+        }
+
+        .window-frame.thumbnail-missing {
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .thumbnail-stack,
+        .thumbnail-fallback {
+            background: linear-gradient(180deg, rgba(31, 39, 54, 0.95), rgba(20, 25, 34, 0.94));
+            border-radius: 16px;
+        }
 
         .window-title {
-            color: white;
-            font-size: 14pt;
-            font-weight: 500;
+            color: #f7fbff;
+            font-size: 13pt;
+            font-weight: 650;
+        }
+
+        .window-meta {
+            color: rgba(205, 217, 229, 0.82);
+            font-size: 10.5pt;
+        }
+
+        .window-state {
+            color: rgba(118, 200, 255, 0.9);
+            font-size: 10pt;
+            font-weight: 600;
         }
     "#;
 
     provider.load_from_data(css_data);
-    gtk4::style_context_add_provider_for_display(
-        &gtk4::gdk::Display::default().expect("Could not connect to a display."),
-        &provider,
-        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+    if let Some(display) = gtk4::gdk::Display::default() {
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
 }
