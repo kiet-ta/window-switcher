@@ -5,6 +5,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -13,6 +14,8 @@ use std::time::{Duration, Instant};
 use crate::config::{
     FOCUS_LOG_PATH,
     FOCUS_QUEUE_CAPACITY,
+    HYPRCTL_MAX_RETRIES,
+    HYPRCTL_RETRY_DELAY_MS,
     MONITOR_REFRESH_SECS,
     REFRESH_DEBOUNCE_MS,
     SAFETY_POLL_SECS,
@@ -492,9 +495,11 @@ async fn refresh_and_emit(
     thumbnail_tx: &async_channel::Sender<ThumbnailJob>,
     state: &mut BackendState,
 ) -> Result<(), ()> {
-    let clients = run_hyprctl_json::<Vec<HyprctlClient>>(&["clients", "-j"]);
-    let active_window = fetch_active_window();
-    let mut degraded = clients.is_none() || active_window.is_none();
+    let clients = run_hyprctl_json_with_retry::<Vec<HyprctlClient>>(&["clients", "-j"]);
+    let active_window = fetch_active_window_with_retry();
+    // active_window can legitimately be None when our layer-shell overlay
+    // has keyboard focus — this is NOT a degraded state
+    let mut degraded = clients.is_none();
 
     if state.should_refresh_monitors() && !refresh_monitors(state) {
         degraded = true;
@@ -525,19 +530,27 @@ async fn refresh_and_emit(
     }
 
     let items = if let Some(clients) = clients {
+        eprintln!("DEBUG: Parsed {} clients", clients.len());
         let active_address = state
             .last_active_state
             .as_ref()
-            .map(|state| state.address.as_str());
+            .map(|state| state.address.clone());
         let mut active_addresses = HashSet::new();
-        let mut items = build_items(&clients, active_address, state, &mut active_addresses);
+        let mut items = build_items(
+            &clients,
+            active_address.as_deref(),
+            state,
+            &mut active_addresses,
+        );
 
+        eprintln!("DEBUG: Built {} items", items.len());
         maybe_run_gc(state, active_addresses).await;
 
         state.last_successful_items = items.clone();
         sort_items(&mut items);
         items
     } else {
+        eprintln!("DEBUG: clients is None, rebuilding from cache");
         let mut items = rebuild_cached_items(state);
         sort_items(&mut items);
         items
@@ -668,7 +681,9 @@ async fn emit_snapshot(
 }
 
 fn refresh_monitors(state: &mut BackendState) -> bool {
-    let Some(monitors) = run_hyprctl_json::<Vec<HyprctlMonitor>>(&["monitors", "-j"]) else {
+    let Some(monitors) =
+        run_hyprctl_json_with_retry::<Vec<HyprctlMonitor>>(&["monitors", "-j"])
+    else {
         return false;
     };
 
@@ -744,8 +759,8 @@ fn apply_thumbnail_result(state: &mut BackendState, result: ThumbnailResult) -> 
     true
 }
 
-fn fetch_active_window() -> Option<HyprctlActiveWindow> {
-    run_hyprctl_json::<HyprctlActiveWindow>(&["activewindow", "-j"])
+fn fetch_active_window_with_retry() -> Option<HyprctlActiveWindow> {
+    run_hyprctl_json_with_retry::<HyprctlActiveWindow>(&["activewindow", "-j"])
 }
 
 fn run_hyprctl_json<T>(args: &[&str]) -> Option<T>
@@ -757,7 +772,33 @@ where
         return None;
     }
 
-    serde_json::from_slice(&output.stdout).ok()
+    match serde_json::from_slice(&output.stdout) { Ok(v) => Some(v), Err(e) => { eprintln!("JSON error for args {:?}: {}", args, e); None } }
+}
+
+/// Retries transient hyprctl IPC failures with a short backoff.
+/// Prevents a single compositor hiccup from degrading the entire UI.
+fn run_hyprctl_json_with_retry<T>(args: &[&str]) -> Option<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    for attempt in 0..=HYPRCTL_MAX_RETRIES {
+        if let Some(result) = run_hyprctl_json(args) {
+            return Some(result);
+        }
+        if attempt < HYPRCTL_MAX_RETRIES {
+            thread::sleep(Duration::from_millis(HYPRCTL_RETRY_DELAY_MS));
+        }
+    }
+
+    static LOGGED: OnceLock<()> = OnceLock::new();
+    LOGGED.get_or_init(|| {
+        eprintln!(
+            "hyprctl {:?} failed after {} retries",
+            args,
+            HYPRCTL_MAX_RETRIES + 1
+        );
+    });
+    None
 }
 
 async fn gc_thumbnails(active_addresses: HashSet<String>) {

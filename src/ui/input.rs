@@ -1,15 +1,15 @@
 use gtk4::gdk::Key;
+use gtk4::gdk::ModifierType;
 use gtk4::glib::Propagation;
 use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, EventControllerKey, FlowBox};
 use gtk4_layer_shell::{KeyboardMode, LayerShell};
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::backend::hyprctl::FocusController;
-use crate::config::{
-    DEFAULT_COLUMNS, MAX_COLUMNS, UI_CARD_WIDTH, UI_GRID_SPACING, UI_OUTER_MARGIN,
-};
+use super::estimated_columns;
 
 fn hide_overlay(window: &ApplicationWindow) {
     window.set_keyboard_mode(KeyboardMode::None);
@@ -23,21 +23,6 @@ fn focus_selected(
     if let Some(address) = selected_address.borrow().as_deref() {
         focus_controller.enqueue(address);
     }
-}
-
-fn estimated_columns(window_width: i32, item_count: usize) -> usize {
-    if item_count == 0 {
-        return 1;
-    }
-
-    if window_width <= 0 {
-        return DEFAULT_COLUMNS.min(item_count).max(1);
-    }
-
-    let usable_width = (window_width - (UI_OUTER_MARGIN * 2)).max(UI_CARD_WIDTH);
-    let card_span = (UI_CARD_WIDTH + UI_GRID_SPACING).max(1);
-    let estimated = (usable_width / card_span).max(1) as usize;
-    estimated.clamp(1, MAX_COLUMNS.min(item_count))
 }
 
 fn apply_selection(
@@ -64,6 +49,7 @@ pub fn bind_keys(
 ) {
     let controller = EventControllerKey::new();
     controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
+    let alt_held = Rc::new(Cell::new(false));
 
     let window_pressed = window.clone();
     let flow_box_pressed = flow_box.clone();
@@ -71,7 +57,12 @@ pub fn bind_keys(
     let selected_address_pressed = selected_address.clone();
     let focus_controller_pressed = focus_controller.clone();
 
-    controller.connect_key_pressed(move |_, key, _, _| {
+    let alt_held_pressed = alt_held.clone();
+    controller.connect_key_pressed(move |_, key, _, modifiers| {
+        if modifiers.contains(ModifierType::ALT_MASK) || matches!(key, Key::Alt_L | Key::Alt_R) {
+            alt_held_pressed.set(true);
+        }
+
         let rendered_order = rendered_order_pressed.borrow();
         let item_count = rendered_order.len();
         if item_count == 0 {
@@ -132,8 +123,12 @@ pub fn bind_keys(
 
     let window_released = window.clone();
     let selected_address_released = selected_address.clone();
-    controller.connect_key_released(move |_, key, _, _| {
-        if matches!(key, Key::Alt_L | Key::Alt_R) {
+    controller.connect_key_released(move |_, key, _, modifiers| {
+        if matches!(key, Key::Alt_L | Key::Alt_R)
+            && alt_held.get()
+            && !modifiers.contains(ModifierType::ALT_MASK)
+        {
+            alt_held.set(false);
             focus_selected(&focus_controller, &selected_address_released);
             hide_overlay(&window_released);
         }

@@ -404,7 +404,7 @@ fn apply_layout(flow_box: &FlowBox, window: &ApplicationWindow, item_count: usiz
     flow_box.set_max_children_per_line(columns as u32);
 }
 
-fn estimated_columns(window_width: i32, item_count: usize) -> usize {
+pub(super) fn estimated_columns(window_width: i32, item_count: usize) -> usize {
     if item_count == 0 {
         return 1;
     }
