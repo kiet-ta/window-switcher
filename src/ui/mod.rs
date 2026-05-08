@@ -22,6 +22,7 @@ use crate::config::{
 struct WindowCard {
     child: FlowBoxChild,
     frame: Frame,
+    small_icon: Image,
     title: Label,
     meta: Label,
     state: Label,
@@ -78,6 +79,17 @@ impl WindowCard {
         preview_stack.set_visible_child_name("fallback");
         item_box.append(&preview_stack);
 
+        let title_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(8)
+            .halign(Align::Start)
+            .build();
+
+        let small_icon = Image::from_icon_name("application-x-executable");
+        small_icon.set_pixel_size(20);
+        small_icon.set_halign(Align::Start);
+        small_icon.set_valign(Align::Center);
+
         let title = Label::builder()
             .css_classes(vec!["window-title".to_string()])
             .halign(Align::Start)
@@ -85,7 +97,10 @@ impl WindowCard {
             .build();
         title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         title.set_wrap(false);
-        title.set_max_width_chars(28);
+        title.set_max_width_chars(25);
+
+        title_box.append(&small_icon);
+        title_box.append(&title);
 
         let meta = Label::builder()
             .css_classes(vec!["window-meta".to_string()])
@@ -105,7 +120,7 @@ impl WindowCard {
         state.set_wrap(false);
         state.set_max_width_chars(28);
 
-        item_box.append(&title);
+        item_box.append(&title_box);
         item_box.append(&meta);
         item_box.append(&state);
         frame.set_child(Some(&item_box));
@@ -117,6 +132,7 @@ impl WindowCard {
         Self {
             child,
             frame,
+            small_icon,
             title,
             meta,
             state,
@@ -136,12 +152,14 @@ impl WindowCard {
         self.meta.set_text(&meta);
         self.meta.set_tooltip_text(Some(&meta));
 
+        let class_lower = item.class.to_lowercase();
         let icon_name = if item.class.is_empty() {
             "application-x-executable"
         } else {
-            item.class.as_str()
+            class_lower.as_str()
         };
         self.icon.set_icon_name(Some(icon_name));
+        self.small_icon.set_icon_name(Some(icon_name));
 
         match item.thumbnail_state {
             ThumbnailState::Ready => {

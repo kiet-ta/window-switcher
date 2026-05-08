@@ -1,4 +1,3 @@
-use hyprland::event_listener::EventListener;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
@@ -390,11 +389,33 @@ pub fn spawn_backend(sender: async_channel::Sender<UiSnapshot>) -> FocusControll
 
 fn spawn_event_listener(sender: async_channel::Sender<()>) {
     thread::spawn(move || {
-        let mut listener = EventListener::new();
-        listener.add_active_window_change_handler(move |_| {
-            let _ = sender.send_blocking(());
-        });
-        let _ = listener.start_listener();
+        let xdg = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap_or_default();
+        let path = format!("{}/hypr/{}/.socket2.sock", xdg, sig);
+        let path_fallback = format!("/tmp/hypr/{}/.socket2.sock", sig);
+        
+        let stream = std::os::unix::net::UnixStream::connect(&path)
+            .or_else(|_| std::os::unix::net::UnixStream::connect(&path_fallback));
+            
+        match stream {
+            Ok(stream) => {
+                let reader = std::io::BufReader::new(stream);
+                for line in std::io::BufRead::lines(reader) {
+                    if let Ok(line) = line {
+                        if line.starts_with("activewindow>>") 
+                            || line.starts_with("openwindow>>") 
+                            || line.starts_with("closewindow>>") 
+                            || line.starts_with("windowtitle>>") 
+                        {
+                            let _ = sender.send_blocking(());
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Hyprland event listener failed to connect: {:?}", e);
+            }
+        }
     });
 }
 

@@ -1,0 +1,8 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running `target/debug/window-switcher`
+
+(window-switcher:1406576): Gdk-WARNING **: 16:24:50.662: Cannot get portal org.freedesktop.portal.Settings version: GDBus.Error:org.freedesktop.DBus.Error.InvalidArgs: No such interface “org.freedesktop.portal.Settings”
+
+(window-switcher:1406576): Gdk-WARNING **: 16:24:50.666: Cannot get portal org.freedesktop.portal.Inhibit version: GDBus.Error:org.freedesktop.DBus.Error.InvalidArgs: No such interface “org.freedesktop.portal.Inhibit”
+DEBUG: Parsed 2 clients
+DEBUG: Built 2 items
